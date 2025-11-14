@@ -17,6 +17,7 @@ import os
 
 print("STARTED CELERY TASK")
 print(f"NEO4J_URI: {os.getenv('NEO4J_URI')}")
+print(f"REDIS_URL: {os.getenv('CELERY_BROKER_URL')}")
 
 @celery_app.task(bind=True, name="process_segment_task")
 def process_segment_task(self, job_id, manifestation_id: str, segment_id: str, start: int, end: int):
