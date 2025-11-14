@@ -167,18 +167,20 @@ def _check_if_task_completed(job_id):
 def _create_root_job(job_id: uuid4, total_segments: int, manifestation_id: str):
     try:
         with SessionLocal() as session:
-            session.add(
-                RootJob(
-                    job_id = job_id,
-                    manifestation_id = manifestation_id,
-                    total_segments = total_segments,
-                    completed_segments = 0,
-                    status = "QUEUED",
-                    created_at = datetime.now(timezone.utc),
-                    updated_at = datetime.now(timezone.utc)
+            existing_job = session.query(RootJob).filter(RootJob.job_id == job_id).first()
+            if existing_job is None:
+                session.add(
+                    RootJob(
+                        job_id = job_id,
+                        manifestation_id = manifestation_id,
+                        total_segments = total_segments,
+                        completed_segments = 0,
+                        status = "QUEUED",
+                        created_at = datetime.now(timezone.utc),
+                        updated_at = datetime.now(timezone.utc)
+                    )
                 )
-            )
-            session.commit()
+                session.commit()
 
     except:
         raise Exception("Failed to create root job, Database write error")
