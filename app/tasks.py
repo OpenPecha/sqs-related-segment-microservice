@@ -6,59 +6,51 @@ from app.db.models import SegmentTask, RootJob
 from datetime import datetime, timezone
 from sqlalchemy import update
 from app.neo4j_database import Neo4JDatabase
-from time import sleep
-
-@celery_app.task(name='app.tasks.add_numbers')
-def add_numbers(x, y):
-    print("Am adding two number x and y")
-    return x + y
-
-@celery_app.task(name='app.tasks.process_data', bind=True)
-def process_data(self, data):
-    total = len(data)
-    results = []
-    for i, item in enumerate(data):
-        # Simulate processing
-        time.sleep(1)
-        results.append(item * 2)
-        
-        # Update progress
-        self.update_state(
-            state='PROGRESS',
-            meta={'current': i + 1, 'total': total}
-        )
-    
-    return results
-
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, name="process_segment_task")
 def process_segment_task(self, job_id, manifestation_id: str, segment_id: str, start: int, end: int):
-    logger.info(f"Processing segment {segment_id} for job {job_id}")
 
-    logger.info(f"Checking if task {job_id} has completed")
-    has_completed = _check_if_task_completed(job_id=job_id)
-    if has_completed:
-        logger.info(f"Task {job_id} has completed")
-        return {
-            "job_id": job_id,
-            "segment_id": segment_id,
-            "status": "COMPLETED"
-        }
-
-    logger.info(f"Updating root job status to IN_PROGRESS")
-    _update_root_job_status(job_id=job_id)
-
-    logger.info(f"Updating segment task record in database to IN_PROGRESS")
-    _update_segment_task_record(
-        job_id = job_id,
-        segment_id = segment_id,
-        status = "IN_PROGRESS"
-    )
-    logger.info(f"Connecting to Neo4J database")
-    db = Neo4JDatabase()
     try:
+        job_id = str(uuid4())
+    
+        _create_root_job(
+            job_id = job_id,
+            total_segments = 4,
+            manifestation_id = manifestation_id
+        )
+
+        _create_segment_tasks(
+            job_id = job_id,
+            segment_id = segment_id
+        )
+
+        logger.info(f"Processing segment {segment_id} for job {job_id}")
+
+        logger.info(f"Checking if task {job_id} has completed")
+        has_completed = _check_if_task_completed(job_id=job_id)
+        if has_completed:
+            logger.info(f"Task {job_id} has completed")
+            return {
+                "job_id": job_id,
+                "segment_id": segment_id,
+                "status": "COMPLETED"
+            }
+
+        logger.info(f"Updating root job status to IN_PROGRESS")
+        _update_root_job_status(job_id=job_id)
+
+        logger.info(f"Updating segment task record in database to IN_PROGRESS")
+        _update_segment_task_record(
+            job_id = job_id,
+            segment_id = segment_id,
+            status = "IN_PROGRESS"
+        )
+        logger.info(f"Connecting to Neo4J database")
+        db = Neo4JDatabase()
+
         logger.info(f"Getting related segments from Neo4J database")
         logger.info(f"""
         Parameters for getting related segments are
@@ -88,7 +80,7 @@ def process_segment_task(self, job_id, manifestation_id: str, segment_id: str, s
         logger.info(f"Updating root job count")
         _update_root_job_count(job_id=job_id)
         logger.info(f"Updated root job count")
-        sleep(20)
+    
         return {
             "job_id": job_id,
             "segment_id": segment_id,
@@ -164,5 +156,38 @@ def _check_if_task_completed(job_id):
         task = session.query(SegmentTask).filter(SegmentTask.job_id == job_id, SegmentTask.status == "COMPLETED").first()
         return task is not None
 
+def _create_root_job(job_id: uuid4, total_segments: int, manifestation_id: str):
+    try:
+        with SessionLocal() as session:
+            session.add(
+                RootJob(
+                    job_id = job_id,
+                    manifestation_id = manifestation_id,
+                    total_segments = total_segments,
+                    completed_segments = 0,
+                    status = "QUEUED",
+                    created_at = datetime.now(timezone.utc),
+                    updated_at = datetime.now(timezone.utc)
+                )
+            )
+            session.commit()
 
+    except:
+        raise Exception("Failed to create root job, Database write error")
 
+def _create_segment_tasks(job_id: str, segment_id: str):
+    try:
+        with SessionLocal() as session:
+            session.add(
+                SegmentTask(
+                    task_id = uuid4(),
+                    job_id = job_id,
+                    segment_id = segment_id,
+                    status = "QUEUED",
+                    created_at = datetime.now(timezone.utc),
+                    updated_at = datetime.now(timezone.utc)
+                )
+            )
+            session.commit()
+    except Exception as e:
+        raise Exception(f"Failed to create segment tasks: {str(e)}")
