@@ -42,5 +42,14 @@ RETURN s.id as segment_id,
        s.span_start as span_start,
        s.span_end as span_end
 ORDER BY s.span_start
+""",
+    "get_segments_by_manifestation": """
+MATCH (m:Manifestation {id: $manifestation_id})<-[:ANNOTATION_OF]-(ann:Annotation)-[:HAS_TYPE]->(at:AnnotationType)
+WHERE at.name IN ['segmentation', 'pagination']
+MATCH (ann)<-[:SEGMENTATION_OF]-(s:Segment)
+RETURN s.id as segment_id,
+       s.span_start as span_start,
+       s.span_end as span_end
+ORDER BY s.span_start
 """
 }

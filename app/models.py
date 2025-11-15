@@ -28,3 +28,11 @@ class SegmentsRelation(BaseModel):
 class AllTextSegmentRelationMapping(BaseModel):
     manifestation_id: str
     segments: list[SegmentsRelation]
+
+class SegmentWithSpan(BaseModel):
+    segment_id: str
+    span: Span
+
+class SegmentationResponse(BaseModel):
+    manifestation_id: str
+    segments: list[SegmentWithSpan]

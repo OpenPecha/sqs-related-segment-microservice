@@ -4,10 +4,14 @@ from app.models import (
     SegmentsRelationRequest, 
     AllTextSegmentRelationMapping,
     SegmentsRelation,
-    Mapping
+    Mapping,
+    SegmentWithSpan,
+    SegmentationResponse,
+    Span
 )
 from app.db.postgres import SessionLocal
 from app.db.models import RootJob, SegmentTask
+from app.neo4j_database import Neo4JDatabase
 from datetime import datetime, timezone
 from uuid import uuid4
 from app.config import get
@@ -94,7 +98,66 @@ def _format_all_text_segment_relation_mapping(manifestation_id: str, all_text_se
     logger.info("Response: ", response)
     return response
 
-@relation.post("/segments")
+def get_all_segmentation(manifestation_id: str) -> SegmentationResponse:
+    """Helper function to get all segments from segmentation/pagination annotation"""
+    try:
+        db = Neo4JDatabase()
+        segments_data = db.get_segments_by_manifestation(manifestation_id)
+        
+        if not segments_data:
+            raise HTTPException(
+                status_code=404, 
+                detail="Segmentation or pagination annotation not available for this manifestation"
+            )
+        
+        segments = [
+            SegmentWithSpan(
+                segment_id=seg["segment_id"],
+                span=Span(start=seg["span_start"], end=seg["span_end"])
+            )
+            for seg in segments_data
+        ]
+        
+        return SegmentationResponse(
+            manifestation_id=manifestation_id,
+            segments=segments
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting segments: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@relation.post("/{manifestation_id}")
+def get_all_segments_relation_by_manifestation_id(manifestation_id: str):
+    try:
+        # Get all segments from the manifestation
+        all_segments = get_all_segmentation(manifestation_id=manifestation_id)
+        
+        # Convert SegmentationResponse to SegmentsRelationRequest
+        from app.models import Segments
+        segments_list = [
+            Segments(
+                segment_id=seg.segment_id,
+                span=seg.span
+            )
+            for seg in all_segments.segments
+        ]
+        
+        request = SegmentsRelationRequest(
+            manifestation_id=manifestation_id,
+            segments=segments_list
+        )
+        
+        # Process the segments relation
+        response = get_segments_relation(request=request)
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_all_segments_relation_by_manifestation_id: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get all segments relation by manifestation, Error: {str(e)}")
+
 def get_segments_relation(request: SegmentsRelationRequest):
 
     job_id = str(uuid4())

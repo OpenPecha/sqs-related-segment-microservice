@@ -183,3 +183,22 @@ class Neo4JDatabase:
             return transformed_related_segments
         else:
             return untransformed_related_segments
+
+    def get_segments_by_manifestation(self, manifestation_id: str) -> list[dict]:
+        """
+        Get all segments from segmentation or pagination annotation for a manifestation.
+        
+        Args:
+            manifestation_id: The manifestation ID
+            
+        Returns:
+            List of dictionaries containing segment_id, span_start, and span_end
+        """
+        with self.get_session() as session:
+            result = session.execute_read(
+                lambda tx: list(tx.run(
+                    Queries.segments["get_segments_by_manifestation"],
+                    manifestation_id=manifestation_id
+                ))
+            )
+            return [dict(record) for record in result]
