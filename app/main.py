@@ -33,11 +33,6 @@ def root():
 def health_check():
     return {"status": "healthy"}
 
-@app.get("/test_worker")
-def test_worker():
-    result = add_numbers.delay(1, 2)
-    return {"result": "task added"}
-
 app.include_router(relation)
 
 if __name__ == "__main__":
