@@ -7,7 +7,8 @@ from app.models import (
     Mapping,
     SegmentWithSpan,
     SegmentationResponse,
-    Span
+    Span,
+    Segments
 )
 from app.db.postgres import SessionLocal
 from app.db.models import RootJob, SegmentTask
@@ -135,7 +136,6 @@ def get_all_segments_relation_by_manifestation_id(manifestation_id: str):
         all_segments = get_all_segmentation(manifestation_id=manifestation_id)
         
         # Convert SegmentationResponse to SegmentsRelationRequest
-        from app.models import Segments
         segments_list = [
             Segments(
                 segment_id=seg.segment_id,
@@ -143,14 +143,13 @@ def get_all_segments_relation_by_manifestation_id(manifestation_id: str):
             )
             for seg in all_segments.segments
         ]
-        
         request = SegmentsRelationRequest(
             manifestation_id=manifestation_id,
             segments=segments_list
         )
-        
         # Process the segments relation
         response = get_segments_relation(request=request)
+    
         return response
     except HTTPException:
         raise
@@ -174,27 +173,49 @@ def get_segments_relation(request: SegmentsRelationRequest):
         segments = request.segments
     )
 
-    dispatched_count = 0
-    for segment in request.segments:
-        message_body = {
-            "job_id": job_id,
-            "manifestation_id": request.manifestation_id,
-            "segment_id": segment.segment_id,
-            "start": segment.span.start,
-            "end": segment.span.end
-        }
+    # Prepare messages for batch sending (max 10 per batch)
+    batch_size = 10
+    total_dispatched = 0
+    
+    for i in range(0, len(request.segments), batch_size):
+        batch = request.segments[i:i + batch_size]
         
-        response = sqs_client.send_message(
+        # Prepare batch entries
+        entries = []
+        for idx, segment in enumerate(batch):
+            message_body = {
+                "job_id": job_id,
+                "manifestation_id": request.manifestation_id,
+                "segment_id": segment.segment_id,
+                "start": segment.span.start,
+                "end": segment.span.end
+            }
+            
+            entries.append({
+                "Id": str(idx),  # Unique ID within the batch (0-9)
+                "MessageBody": json.dumps(message_body)
+            })
+        
+        # Send batch
+        response = sqs_client.send_message_batch(
             QueueUrl=get("SQS_QUEUE_URL"),
-            MessageBody=json.dumps(message_body),
+            Entries=entries
         )
-        dispatched_count += 1
-        print(f"Dispatched task {dispatched_count} to SQS for segment {segment.segment_id}, MessageId: {response['MessageId']}")
+        
+        # Count successful sends
+        successful = len(response.get('Successful', []))
+        failed = len(response.get('Failed', []))
+        total_dispatched += successful
+        
+        logger.info(f"Batch sent: {successful} successful, {failed} failed")
+        
+        if failed > 0:
+            logger.error(f"Failed messages: {response.get('Failed', [])}")
 
     return {
         "job_id": job_id,
         "status": "QUEUED",
-        "message": f"Segments relation job created successfully. Dispatched {dispatched_count} tasks."
+        "message": f"Segments relation job created successfully. Dispatched {total_dispatched} tasks in batches."
     }
 
 
