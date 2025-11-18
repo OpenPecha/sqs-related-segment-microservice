@@ -35,4 +35,4 @@ consumer = SimpleConsumer(
 
 if __name__ == "__main__":
     logger.info("Starting SQS consumer...")
-    consumer.run()
+    consumer.start()
