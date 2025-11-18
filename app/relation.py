@@ -19,6 +19,9 @@ from app.config import get
 import json
 import logging
 
+# Configure logger
+logger = logging.getLogger(__name__)
+
 import boto3
 
 relation = APIRouter(
@@ -81,7 +84,7 @@ def _format_all_text_segment_relation_mapping(manifestation_id: str, all_text_se
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None
         }
-        print("Starting with formatting task: ", task_dict)
+        logger.info("Starting with formatting task: ", task_dict)
         segment = SegmentsRelation(
             segment_id = task.segment_id,
             mappings = []
@@ -92,9 +95,9 @@ def _format_all_text_segment_relation_mapping(manifestation_id: str, all_text_se
                 segments = mapping["segments"]
             )
             segment.mappings.append(mapping_dict)
-        print("Segment: ", segment)
+        logger.info("Segment: ", segment)
         response.segments.append(segment)
-    print("Response: ", response)
+    logger.info("Response: ", response)
     return response
 
 def get_all_segmentation(manifestation_id: str) -> SegmentationResponse:
@@ -205,7 +208,7 @@ def get_segments_relation(request: SegmentsRelationRequest):
         failed = len(response.get('Failed', []))
         total_dispatched += successful
         
-        print(f"Batch sent: {successful} successful, {failed} failed")
+        logger.info(f"Batch sent: {successful} successful, {failed} failed")
         
         if failed > 0:
             logger.error(f"Failed messages: {response.get('Failed', [])}")
