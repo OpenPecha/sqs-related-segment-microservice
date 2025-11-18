@@ -29,15 +29,22 @@ def process_segment_task(job_id, manifestation_id: str, segment_id: str, start: 
     try:
         logger.info(f"Processing segment {segment_id} for job {job_id}")
 
-        logger.info(f"Updating root job status to IN_PROGRESS")
+        # Try to claim the task atomically - prevents duplicate processing by multiple workers
+        logger.info(f"Attempting to claim segment task {segment_id}")
+        if not _try_claim_segment_task(job_id=job_id, segment_id=segment_id):
+            logger.warning(f"Segment {segment_id} already claimed or processed by another worker. Skipping.")
+            return {
+                "job_id": job_id,
+                "segment_id": segment_id,
+                "status": "SKIPPED",
+                "message": "Already processed by another worker"
+            }
+        
+        logger.info(f"Successfully claimed segment task {segment_id}")
+
+        logger.info(f"Updating root job status to IN_PROGRESS (if currently QUEUED)")
         _update_root_job_status(job_id=job_id)
 
-        logger.info(f"Updating segment task record in database to IN_PROGRESS")
-        _update_segment_task_record(
-            job_id = job_id,
-            segment_id = segment_id,
-            status = "IN_PROGRESS"
-        )
         logger.info(f"Connecting to Neo4J database")
         db = Neo4JDatabase()
 
@@ -91,14 +98,35 @@ def process_segment_task(job_id, manifestation_id: str, segment_id: str, start: 
         raise exc
 
 
+def _try_claim_segment_task(job_id, segment_id):
+    """
+    Atomically claim a segment task by updating from QUEUED to IN_PROGRESS.
+    Returns True if successfully claimed, False if already claimed by another worker.
+    """
+    with SessionLocal() as session:
+        result = session.query(SegmentTask).filter(
+            SegmentTask.job_id == job_id, 
+            SegmentTask.segment_id == segment_id,
+            SegmentTask.status == "QUEUED"  # Only update if status is QUEUED
+        ).update({
+            "status": "IN_PROGRESS",
+            "updated_at": datetime.now(timezone.utc)
+        })
+        session.commit()
+        return result > 0  # True if we updated a row (claimed it), False otherwise
+
 def _update_segment_task_record(job_id, segment_id, status, error_message=None):
     with SessionLocal() as session:
-        segment_task = session.query(SegmentTask).filter(SegmentTask.job_id == job_id, SegmentTask.segment_id == segment_id).update({
+        result = session.query(SegmentTask).filter(
+            SegmentTask.job_id == job_id, 
+            SegmentTask.segment_id == segment_id
+        ).update({
             "status": status,
             "error_message": error_message,
             "updated_at": datetime.now(timezone.utc)
         })
         session.commit()
+        return result  # Returns number of rows affected
 
 def _store_related_segments_in_db(job_id, segment_id, result_json):
     with SessionLocal() as session:
@@ -113,10 +141,11 @@ def _store_related_segments_in_db(job_id, segment_id, result_json):
         session.commit()
 
 def _update_root_job_status(job_id):
+    """Update root job status to IN_PROGRESS only if it's currently QUEUED"""
     with SessionLocal() as session:
         session.execute(
             update(RootJob)
-            .where(RootJob.job_id == job_id)
+            .where(RootJob.job_id == job_id, RootJob.status == "QUEUED")
             .values(status="IN_PROGRESS", updated_at=datetime.now(timezone.utc))
         )
         session.commit()
