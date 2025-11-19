@@ -17,7 +17,7 @@ Config = {
     "SQS_QUEUE_URL": os.getenv('SQS_QUEUE_URL', None),
 
     "SQS_COMPLETED_QUEUE_URL": os.getenv('SQS_COMPLETED_QUEUE_URL', None),
-    "REDIS_URL": os.getenv('REDIS_URL', None),
+    "DRAGONFLY_URL": os.getenv('DRAGONFLY_URL', None),
 }
 
 

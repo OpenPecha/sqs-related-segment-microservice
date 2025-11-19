@@ -10,7 +10,7 @@ from neo4j import GraphDatabase
 from app.neo4j_database_validator import Neo4JDatabaseValidator
 import os
 from app.neo4j_quries import Queries
-from app.redis_cache import RedisCache
+from app.redis_cache import DragonflyCache
 
 load_dotenv(override=True)
 
@@ -48,7 +48,7 @@ class Neo4JDatabase:
 
     def _get_alignment_pairs_by_manifestation(self, manifestation_id: str) -> list[dict]:
         logger.info(f"Checking cache for alignment pairs by manifestation {manifestation_id}")
-        cache = RedisCache()
+        cache = DragonflyCache()
         cache_key = f"alignment_pairs_by_manifestation_{manifestation_id}"
         cache_result = cache.get(key=cache_key)
         if cache_result:
@@ -112,7 +112,7 @@ class Neo4JDatabase:
 
     def get_manifestation_id_by_annotation_id(self, annotation_id: str) -> str:
         logger.info(f"Checking cache for manifestation id by annotation id {annotation_id}")
-        cache = RedisCache()
+        cache = DragonflyCache()
         cache_key = f"manifestation_id_by_annotation_id_{annotation_id}"
         cache_result = cache.get(key=cache_key)
         if cache_result:

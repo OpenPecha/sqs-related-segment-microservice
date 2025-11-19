@@ -7,6 +7,7 @@ A production-ready microservice that consumes messages from AWS SQS, processes s
 - **AWS SQS Consumer**: Reliable message consumption with automatic retry and error handling
 - **Multi-Worker Support**: Race condition protection for concurrent processing
 - **Atomic Task Claiming**: Prevents duplicate processing across multiple workers
+- **Dragonfly Cache**: High-performance caching for Neo4j alignment queries
 - **Graph Database Integration**: Neo4j for complex relationship traversal (BFS algorithm)
 - **PostgreSQL Storage**: Persistent storage of job status and results
 - **Structured Logging**: Production-ready logging with proper log levels
@@ -112,6 +113,9 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 # SQS Queues
 SQS_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue-name
 SQS_COMPLETED_QUEUE_URL=https://sqs.region.amazonaws.com/account/completed-queue
+
+# Dragonfly Cache (Optional - improves performance)
+DRAGONFLY_URL=redis://default:password@your-instance.dragonflydb.cloud:6379
 ```
 
 See `env.example` for a complete template.

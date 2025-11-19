@@ -6,4 +6,4 @@ neo4j==5.28.2
 python-dotenv==1.0.0
 boto3==1.40.74
 aws-sqs-consumer==0.0.15
-redis==5.0.1
+redis==5.0.1  # Used for Dragonfly cache (Redis protocol-compatible)
