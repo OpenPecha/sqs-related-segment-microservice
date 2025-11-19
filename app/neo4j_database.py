@@ -10,6 +10,7 @@ from neo4j import GraphDatabase
 from app.neo4j_database_validator import Neo4JDatabaseValidator
 import os
 from app.neo4j_quries import Queries
+from app.redis_cache import RedisCache
 
 load_dotenv(override=True)
 
@@ -46,12 +47,21 @@ class Neo4JDatabase:
         return self.__driver.session()
 
     def _get_alignment_pairs_by_manifestation(self, manifestation_id: str) -> list[dict]:
+        cache = RedisCache()
+        cache_key = f"alignment_pairs_by_manifestation_{manifestation_id}"
+        cache_result = cache.get(key=cache_key)
+        if cache_result:
+            return cache_result
         with self.get_session() as session:
             result = session.execute_read(
                 lambda tx: tx.run(
                     Queries.annotations["get_alignment_pairs_by_manifestation"],
                     manifestation_id=manifestation_id
                 ).data()
+            )
+            cache.set(
+                key = cache_key,
+                value = result
             )
             return result
 
@@ -96,6 +106,11 @@ class Neo4JDatabase:
             ]
 
     def get_manifestation_id_by_annotation_id(self, annotation_id: str) -> str:
+        cache = RedisCache()
+        cache_key = f"manifestation_id_by_annotation_id_{annotation_id}"
+        cache_result = cache.get(key=cache_key)
+        if cache_result:
+            return cache_result
         with self.__driver.session() as session:
             record = session.execute_read(
                 lambda tx: tx.run(Queries.manifestations["fetch_by_annotation_id"], annotation_id=annotation_id).single()
@@ -103,6 +118,10 @@ class Neo4JDatabase:
             if record is None:
                 return None
             d = record.data()
+            cache.set(
+                key = cache_key,
+                value = d["manifestation_id"]
+            )
             return d["manifestation_id"]
 
     def _get_overlapping_segments(self, manifestation_id: str, start:int, end:int) -> list[dict]:
