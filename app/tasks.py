@@ -24,31 +24,35 @@ sqs_client = boto3.client(
 )
     
 
-def process_segment_task(job_id, manifestation_id: str, segment_id: str, start: int, end: int):
+def process_segment_task(
+    job_id,
+    manifestation_id: str,
+    segment_id: str,
+    start: int,
+    end: int
+):
 
     try:
         logger.info(f"Processing segment {segment_id} for job {job_id}")
 
-        # Try to claim the task atomically - prevents duplicate processing by multiple workers
         logger.info(f"Attempting to claim segment task {segment_id}")
         if not _try_claim_segment_task(job_id=job_id, segment_id=segment_id):
-            logger.warning(f"Segment {segment_id} already claimed or processed by another worker. Skipping.")
-            return {
-                "job_id": job_id,
-                "segment_id": segment_id,
-                "status": "SKIPPED",
-                "message": "Already processed by another worker"
-            }
-        
-        logger.info(f"Successfully claimed segment task {segment_id}")
+            logger.warning(
+                f"Segment {segment_id} already claimed. Skipping."
+            )
+            raise Exception(f"Segment {segment_id} already claimed. Skipping.")
 
-        logger.info(f"Updating root job status to IN_PROGRESS (if currently QUEUED)")
+        logger.info(
+            f"Successfully claimed segment task {segment_id}"
+        )
+        
+        logger.info("Updating root job status to IN_PROGRESS (if currently QUEUED)")
         _update_root_job_status(job_id=job_id)
 
-        logger.info(f"Connecting to Neo4J database")
+        logger.info("Connecting to Neo4J database")
         db = Neo4JDatabase()
 
-        logger.info(f"Getting related segments from Neo4J database")
+        logger.info("Getting related segments from Neo4J database")
         logger.info(f"""
         Parameters for getting related segments are
         manifestation_id: {manifestation_id}
@@ -56,44 +60,44 @@ def process_segment_task(job_id, manifestation_id: str, segment_id: str, start: 
         end: {end}
         """)
         related_segments = db._get_related_segments(
-            manifestation_id = manifestation_id,
-            start = start,
-            end = end,
-            transform = True
+            manifestation_id=manifestation_id,
+            start=start,
+            end=end,
+            transform=True
         )
         logger.info(f"Related segments: {related_segments}")
-        logger.info(f"Fetched related segments from Neo4J database")
+        logger.info("Fetched related segments from Neo4J database")
 
-        logger.info(f"Storing related segments in database")
-        
+        logger.info("Storing related segments in database")
+
         db_response = _store_related_segments_in_db(
-            job_id = job_id,
-            segment_id = segment_id,
-            result_json = related_segments
+            job_id=job_id,
+            segment_id=segment_id,
+            result_json=related_segments
         )
         logger.info(f"Database response: {db_response}")
-        logger.info(f"Stored related segments in database")
+        logger.info("Stored related segments in database")
 
-        logger.info(f"Updating root job count")
+        logger.info("Updating root job count")
         _update_root_job_count(job_id=job_id)
-        logger.info(f"Updated root job count")
-    
+        logger.info("Updated root job count")
+
         return {
             "job_id": job_id,
             "segment_id": segment_id,
             "related_segments": related_segments,
             "status": "COMPLETED"
         }
-    
+
     except Exception as exc:
         logger.error(f"Error processing segment relationships for segment {segment_id} for job {job_id}")
         logger.error(f"Error message: {str(exc)}")
-        logger.error(f"Updating segment task record in database to RETRYING")
+        logger.error("Updating segment task record in database to RETRYING")
         _update_segment_task_record(
-            job_id = job_id,
-            segment_id = segment_id,
+            job_id=job_id,
+            segment_id=segment_id,
             status="RETRYING",
-            error_message = str(exc)
+            error_message=str(exc)
         )
         raise exc
 
@@ -115,6 +119,7 @@ def _try_claim_segment_task(job_id, segment_id):
         session.commit()
         return result > 0  # True if we updated a row (claimed it), False otherwise
 
+
 def _update_segment_task_record(job_id, segment_id, status, error_message=None):
     with SessionLocal() as session:
         result = session.query(SegmentTask).filter(
@@ -128,9 +133,13 @@ def _update_segment_task_record(job_id, segment_id, status, error_message=None):
         session.commit()
         return result  # Returns number of rows affected
 
+
 def _store_related_segments_in_db(job_id, segment_id, result_json):
     with SessionLocal() as session:
-        segment_task = session.query(SegmentTask).filter(SegmentTask.job_id == job_id, SegmentTask.segment_id == segment_id).first()
+        segment_task = session.query(SegmentTask).filter(
+            SegmentTask.job_id == job_id,
+            SegmentTask.segment_id == segment_id
+        ).first()
         if segment_task is None:
             logger.error(f"Segment task not found for job_id={job_id}, segment_id={segment_id}")
             return
@@ -139,6 +148,9 @@ def _store_related_segments_in_db(job_id, segment_id, result_json):
         segment_task.updated_at = datetime.now(timezone.utc)
         logger.info(f"Updated segment task record in SegmentTask table with segment id = {segment_id}")
         session.commit()
+
+        return segment_task
+
 
 def _update_root_job_status(job_id):
     """Update root job status to IN_PROGRESS only if it's currently QUEUED"""
@@ -149,6 +161,7 @@ def _update_root_job_status(job_id):
             .values(status="IN_PROGRESS", updated_at=datetime.now(timezone.utc))
         )
         session.commit()
+
 
 def _update_root_job_count(job_id):
     with SessionLocal() as session:
@@ -162,12 +175,12 @@ def _update_root_job_count(job_id):
             )
             .returning(RootJob)
         ).scalar_one()
-        
+
         # Check completion in same transaction
         if root.completed_segments >= root.total_segments:
             root.status = "COMPLETED"
             root.updated_at = datetime.now(timezone.utc)
-            
+
             # Send completion message to SQS
             try:
                 queue_url = get('SQS_COMPLETED_QUEUE_URL')
