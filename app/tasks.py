@@ -36,8 +36,6 @@ def process_segment_task(
 ):
 
     try:
-        
-        _update_root_job_status(job_id=root_job_id)
 
         db = Neo4JDatabase()
 
