@@ -1,9 +1,9 @@
 import logging
-import json
 from app.db.postgres import SessionLocal
-from app.db.models import SegmentTask, RootJob
+from app.db.models import SegmentMapping, RootJob
 from datetime import datetime, timezone
-from sqlalchemy import update, insert, case
+from sqlalchemy import update, case
+from sqlalchemy.dialects.postgresql import insert
 from app.neo4j_database import Neo4JDatabase
 from dotenv import load_dotenv
 import boto3
@@ -25,7 +25,7 @@ sqs_client = boto3.client(
     aws_access_key_id=get('AWS_ACCESS_KEY_ID'),
     aws_secret_access_key=get('AWS_SECRET_ACCESS_KEY')
 )
-    
+
 
 def process_segment_task(
     root_job_id,
@@ -51,6 +51,7 @@ def process_segment_task(
 
             _store_related_segments_in_db(
                 job_id=root_job_id,
+                text_id=text_id,
                 segment_id=segment['segment_id'],
                 result_json=related_segments
             )
@@ -77,25 +78,26 @@ def process_segment_task(
         raise exc
 
 
-def _store_related_segments_in_db(job_id: str, segment_id: str, result_json: dict):
+def _store_related_segments_in_db(job_id: str, text_id: str, segment_id: str, result_json: dict):
     try:
         now = datetime.now(timezone.utc)
 
-        stmt = insert(SegmentTask).values(
-            job_id=job_id,
+        stmt = insert(SegmentMapping).values(
+            root_job_id=job_id,
+            text_id=text_id,
             segment_id=segment_id,
             result_json=result_json,
             status="COMPLETED",
             updated_at=now,
             created_at=now,   # include if you have it
         ).on_conflict_do_update(
-            index_elements=[SegmentTask.job_id, SegmentTask.segment_id],
+            index_elements=[SegmentMapping.root_job_id, SegmentMapping.segment_id],
             set_={
                 "result_json": result_json,     # overwrite
                 "status": "COMPLETED",
                 "updated_at": now,
             }
-        ).returning(SegmentTask)  # Postgres only
+        ).returning(SegmentMapping)  # Postgres only
 
         with SessionLocal() as session:
             row = session.execute(stmt).scalar_one()  # Postgres: returns the row

@@ -23,7 +23,7 @@ class SimpleConsumer(Consumer):
     """
     def handle_message(self, message: Message):
         json_content = json.loads(message.Body)
-        
+
         root_job_id = json_content['root_job_id']
         text_id = json_content['text_id']
         batch_number = json_content['batch_number']
@@ -35,9 +35,9 @@ class SimpleConsumer(Consumer):
             text_id=text_id,
             batch_number=int(batch_number),
             total_segments=int(total_segments),
-            segments=list[dict](segments)
+            segments=list(segments)
         )
-        logger.info(f"Segment relations: {segment_relations}")
+        logger.info("Segment relations: %s", segment_relations)
 
 
 consumer = SimpleConsumer(
