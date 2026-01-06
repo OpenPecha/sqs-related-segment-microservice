@@ -5,9 +5,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 Config = {
-    "NEO4J_URI": os.getenv('NEO4J_URI', None),
     "NEO4J_USER": os.getenv('NEO4J_USER', None),
-    "NEO4J_PASSWORD": os.getenv('NEO4J_PASSWORD', None),
+
+    "DEVELOPMENT_NEO4J_URI": os.getenv('NEO4J_URI', None),
+    "DEVELOPMENT_NEO4J_PASSWORD": os.getenv('NEO4J_PASSWORD', None),
+    
+    "PRODUCTION_NEO4J_URI": os.getenv('PRODUCTION_NEO4J_URI', None),
+    "PRODUCTION_NEO4J_PASSWORD": os.getenv('PRODUCTION_NEO4J_PASSWORD', None),
+    
     "POSTGRES_URL": os.getenv('POSTGRES_URL', 'postgresql://admin:pechaAdmin@localhost:5435/pecha'),
     
     # AWS SQS Configuration
@@ -17,7 +22,6 @@ Config = {
     "SQS_QUEUE_URL": os.getenv('SQS_QUEUE_URL', None),
 
     "SQS_COMPLETED_QUEUE_URL": os.getenv('SQS_COMPLETED_QUEUE_URL', None),
-    "DRAGONFLY_URL": os.getenv('DRAGONFLY_URL', None),
 }
 
 
