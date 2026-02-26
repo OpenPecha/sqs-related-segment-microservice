@@ -199,14 +199,3 @@ The body is a single JSON object with:
 - From `requirements.txt`: `pydantic`, `sqlalchemy`, `alembic`, `psycopg2-binary`, `neo4j`, `python-dotenv`, `boto3`, `aws-sqs-consumer==0.0.15`. No separate logging framework.
 
 ---
-
-## Documentation Checklist
-
-- [x] **Service overview** — role in pipeline and end-to-end processing responsibility  
-- [x] **SQS consumption flow** — consumer setup, message parsing, and task execution flow  
-- [x] **Relation calculation logic** — Neo4j traversal/BFS approach and segment mapping generation  
-- [x] **Database operations** — storing segment_mapping, upsert/idempotency strategy, job status/progress updates  
-- [x] **Queue #2 publishing** — completion message flow and purpose of second queue  
-- [x] **Queue #2 payload** — message schema, field descriptions, and sample JSON  
-- [x] **Reliability concerns** — retries, visibility timeout, multi-worker/concurrency notes  
-- [x] **Error handling, logging, config & libraries** — operational safeguards and dependencies used  
