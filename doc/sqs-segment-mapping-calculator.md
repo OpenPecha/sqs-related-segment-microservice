@@ -108,7 +108,7 @@ This service performs the main computation step and supports asynchronous, scala
 
 ## 3.1 Segment Mapping Algorithm — Deep Dive
 
-This section explains in detail how the service finds segment mappings: from a manifestation and segment span, through alignment annotations, to related segments on other manifestations (including indirectly connected ones). **Illustrations:** The Mermaid blocks below render as diagrams in GitHub, GitLab, VS Code/Cursor, and most Markdown viewers. A text flow diagram is also included so the flow is visible in plain text.
+This section explains in detail how the service finds segment mappings: from a manifestation and segment span, through alignment annotations, to related segments on other manifestations (including indirectly connected ones). **Illustrations:** The Mermaid blocks below render as diagrams in GitHub, GitLab, VS Code/Cursor, and most Markdown viewers. A text flow diagram is also included so the flow is visible in plain text. For a visual example and test cases based on the same relations, see [Further reading for better understanding](#further-reading-for-better-understanding) at the end of this section (Excalidraw diagram and OpenPecha `test_relations.py`).
 
 ### High-level flow (text diagram)
 
@@ -317,6 +317,15 @@ The Cypher for alignment pairs is:
 `(m:Manifestation)<-[:ANNOTATION_OF]-(a1:Annotation)-[:ALIGNED_TO]-(a2:Annotation)`.
 
 So **a1** is always the current manifestation's alignment annotation ("our" side), and **a2** is the other. We only follow **outgoing** alignment: from our annotation to the other. We do not need a separate "incoming" case, because every alignment is represented as a pair and we consider both directions by recording `(a1,a2)` and `(a2,a1)` in `traversed_alignment_pairs`, and we traverse from each manifestation to its neighbors. The "other alignment span" we use is the span of segments in **a2** (their side); we then query the **segmentation** of the manifestation that owns a2 to get the final mapping segments.
+
+### Further reading for better understanding
+
+You can refer to these external resources for a visual example and executable test cases based on the same relations:
+
+| Resource | Description |
+|----------|-------------|
+| [Excalidraw: segment mapping relations](https://excalidraw.com/#json=1Vliyd8lBGDc3nDKT8Pbo,5WVEtvfZnQmaHgfP2ulaQA) | Visual example of how manifestations, alignments, and segments relate (drawn in Excalidraw). |
+| [OpenPecha backend: test_relations.py](https://github.com/OpenPecha/openpecha-backend/blob/main/functions/tests/test_relations.py) | Test cases written from the same Excalidraw scenario; useful to see expected inputs and outputs. |
 
 ---
 
