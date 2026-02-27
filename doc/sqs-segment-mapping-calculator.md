@@ -106,6 +106,220 @@ This service performs the main computation step and supports asynchronous, scala
 
 ---
 
+## 3.1 Segment Mapping Algorithm — Deep Dive
+
+This section explains in detail how the service finds segment mappings: from a manifestation and segment span, through alignment annotations, to related segments on other manifestations (including indirectly connected ones). **Illustrations:** The Mermaid blocks below render as diagrams in GitHub, GitLab, VS Code/Cursor, and most Markdown viewers. A text flow diagram is also included so the flow is visible in plain text.
+
+### High-level flow (text diagram)
+
+```
+  INPUT: manifestation_id + segment span [start, end]
+       |
+       v
+  +------------------+
+  | Current          |
+  | Manifestation M  |
+  +--------+---------+
+       |
+       |  For each ALIGNMENT annotation of M
+       v
+  +------------------+     overlap?      +------------------+
+  | Segments in      | -----------------> | Our alignment     |
+  | M's segmentation |   (span [s,e])     | segments (a1)     |
+  | (span from input)|                    +--------+---------+
+  +------------------+                             |
+                                                   | ALIGNED_TO
+                                                   v
+  +------------------+                    +------------------+
+  | Result: mapping   | <----------------- | Other side        |
+  | for M             |  overlapping      | segments (a2)     |
+  | segments          |  segments in      | overall span      |
+  +------------------+  M's segmentation  +--------+---------+
+       ^                                            |
+       |                                            v
+       |                                    +------------------+
+       |                                    | Target           |
+       +------------------------------------| Manifestation M' |
+                (repeat via BFS:            | segmentation     |
+                 M' becomes M next)         +------------------+
+```
+
+### Neo4j graph model
+
+The algorithm operates on a graph where manifestations are linked by annotations. Two annotation types matter:
+
+- **Segmentation:** One per manifestation; holds the canonical segments (with `span_start`, `span_end`) that we return as mapping results.
+- **Alignment:** Pairs of annotations (one per manifestation) that are linked by `ALIGNED_TO`; each alignment annotation has segments linked by `ALIGNED_TO` to segments in the other annotation.
+
+```mermaid
+flowchart LR
+    subgraph ManA [Manifestation A]
+        M_A[Man-A]
+    end
+    subgraph AnnA [Annotations of A]
+        SegAnn_A[Segmentation Ann]
+        AlignAnn_A[Alignment Ann a1]
+    end
+    subgraph SegsA [Segments]
+        S_A1[Segment s1]
+        S_A2[Segment s2]
+    end
+    M_A -->|ANNOTATION_OF| SegAnn_A
+    M_A -->|ANNOTATION_OF| AlignAnn_A
+    SegAnn_A -->|SEGMENTATION_OF| S_A1
+    AlignAnn_A -->|SEGMENTATION_OF| S_A2
+    SegAnn_A -.->|HAS_TYPE| SegType[AnnotationType segmentation]
+    AlignAnn_A -.->|HAS_TYPE| AlignType[AnnotationType alignment]
+```
+
+```mermaid
+flowchart LR
+    subgraph ManB [Manifestation B]
+        M_B[Man-B]
+    end
+    AlignAnn_A <-.->|ALIGNED_TO| AlignAnn_B[Alignment Ann a2]
+    AlignAnn_B -->|ANNOTATION_OF| M_B
+    AlignAnn_B -->|SEGMENTATION_OF| S_B_align[Segment in alignment]
+    M_B -->|ANNOTATION_OF| SegAnn_B[Segmentation Ann]
+    SegAnn_B -->|SEGMENTATION_OF| S_B_seg[Segment in segmentation]
+```
+
+- **Manifestation** — `(m:Manifestation)`; one node per text manifestation.
+- **Annotation** — `(a:Annotation)`; has `ANNOTATION_OF` to exactly one Manifestation and `HAS_TYPE` to an AnnotationType (`alignment` or `segmentation`).
+- **Segment** — `(s:Segment)`; has `SEGMENTATION_OF` to an Annotation; has `span_start`, `span_end`.
+- **Alignment link** — Two alignment annotations are related by `(a1)-[:ALIGNED_TO]-(a2)`. Segments inside a1 and a2 are linked by `(s1)-[:ALIGNED_TO]-(s2)`.
+
+The **span** we use for the source segment comes from the incoming message (`segment.span.start`, `segment.span.end`); it corresponds to that segment's position in the source manifestation's segmentation.
+
+### Step-by-step algorithm
+
+| Step | Action | Purpose |
+|------|--------|---------|
+| 1 | Receive `manifestation_id` and span `(start, end)` | Input from one segment in the batch (span from message). |
+| 2 | Initialize BFS queue with `{ manifestation_id, span_start, span_end }`; mark manifestation visited | Start traversal from source. |
+| 3 | Dequeue item; get all alignment pairs for that manifestation | Pairs `(a1, a2)` where a1 is this manifestation's alignment annotation, a2 is the other (Cypher: Manifestation → ANNOTATION_OF → alignment Annotation → ALIGNED_TO → a2). |
+| 4 | For each pair not yet traversed: `get_aligned_segments(a1, span)` | Find segments in **our** alignment (a1) that overlap the span; return the **other** side's segments (s2 in a2) with their spans. |
+| 5 | Compute overall span from returned segments | `overall_start = min(span_start)`, `overall_end = max(span_end)` over the s2 segments. |
+| 6 | Resolve target manifestation | `get_manifestation_id_by_annotation_id(a2_id)` → manifestation_2. |
+| 7 | If already visited: skip | Prevents cycles and re-processing. |
+| 8 | If `transform=True`: `get_overlapping_segments(manifestation_2, overall_start, overall_end)` | On the **target** manifestation, get segments from its **segmentation** annotation that overlap the overall span; this is the mapping for that manifestation. |
+| 9 | Append to result; mark manifestation_2 visited; record traversed pair; enqueue `{ manifestation_2, overall_start, overall_end }` | Produces direct mappings and feeds BFS for indirect mappings (e.g. A → B → C). |
+
+Implementation: `_get_related_segments` in [app/neo4j_database.py](app/neo4j_database.py); Cypher in [app/neo4j_quries.py](app/neo4j_quries.py) (`get_alignment_pairs_by_manifestation`, `get_aligned_segments`, `get_overlapping_segments`).
+
+### Direct vs indirect mapping (BFS)
+
+We discover **direct** mappings (same manifestation as the alignment partner) and **indirect** mappings (reachable only via another manifestation).
+
+**Illustration (traversal):**
+
+```
+    [Manifestation A]  ----alignment---->  [Manifestation B]  ----alignment---->  [Manifestation C]
+    (source, span)           (direct)            (span from A)        (indirect; A not aligned to C)
+         |                        |                       |                              |
+         |                        v                       v                              v
+         |                  mapping for B           BFS queue                    mapping for C
+         |                  (seg-B1, seg-B2)        (B, span)                     (seg-C1, seg-C2)
+         v
+    BFS queue: (A, span) -> dequeue A -> enqueue (B, span) -> dequeue B -> enqueue (C, span) -> ...
+```
+
+```mermaid
+flowchart TB
+    subgraph Source [Source]
+        A[Manifestation A\nspan from segment]
+    end
+    subgraph Direct [Direct mapping]
+        B[Manifestation B]
+    end
+    subgraph Indirect [Indirect mapping]
+        C[Manifestation C]
+    end
+    A -->|"alignment pair (a1,a2)"| B
+    B -->|"alignment pair (b1,b2)\nA not aligned to C"| C
+    Q[("BFS queue")]
+    A --> Q
+    Q --> B
+    B --> Q
+    Q --> C
+```
+
+- **Direct:** From A we get alignment pairs; one pair leads to B. We compute the span on B's side, then (with transform) overlapping segments in B's **segmentation** → mapping for B.
+- **Indirect:** We enqueue B with the computed span. When we dequeue B, we get B's alignment pairs. One pair may lead to C (C is not directly aligned with A). We compute span on C's side and (with transform) overlapping segments in C's segmentation → mapping for C.
+- **Visited set:** Once a manifestation is processed (or skipped as already visited), we do not process it again, so we avoid cycles and duplicate work.
+
+### Alignment to segmentation (transform)
+
+Alignment annotations carry segment-to-segment links; the stored mapping is by **segmentation** segments. The transform step converts the "other alignment span" into segmentation segments on the target manifestation.
+
+```mermaid
+flowchart LR
+    subgraph Input [Input]
+        SpanA["Span on A [start, end]"]
+    end
+    subgraph Alignment [Alignment annotation pair]
+        S1["Segments s1 in a1\noverlap span"]
+        S2["Segments s2 in a2\nother side spans"]
+    end
+    subgraph Envelope [Envelope]
+        Overall["overall_start = min(s2.start)\noverall_end = max(s2.end)"]
+    end
+    subgraph Target [Target manifestation B]
+        SegAnn_B["Segmentation annotation"]
+        Segs_B["Overlapping segments\nin B segmentation"]
+    end
+    SpanA --> S1
+    S1 --> S2
+    S2 --> Overall
+    Overall --> SegAnn_B
+    SegAnn_B --> Segs_B
+```
+
+1. **Input:** Span `[start, end]` on source manifestation A (from the segment in the message).
+2. **Alignment:** For one alignment pair `(a1, a2)`, find segments s1 in a1 that overlap the span; get linked segments s2 in a2 (and their spans).
+3. **Envelope:** `overall_start` = min of s2 starts, `overall_end` = max of s2 ends.
+4. **Transform:** On manifestation B (owner of a2), run `get_overlapping_segments(B, overall_start, overall_end)` against B's **segmentation** annotation; the returned segments are the mapping for B for this alignment.
+
+So the "first answer" for the initial segment on another manifestation is: the set of segmentation segments on that manifestation that overlap the envelope of the aligned segments (from the alignment annotation) on that manifestation's side.
+
+### Example walkthrough
+
+**Setup:**
+
+- **Manifestation A (Man-A):** Source; we have segment seg-A1 with span `[50, 150]`.
+- **Man-A ↔ Man-B alignment:** A-side segments overlapping [50,150]: [50,100] and [100,150]. They align to B-side segments with spans [200,250] and [250,300].
+- **Man-B segmentation:** seg-B1 `[200, 275]`, seg-B2 `[275, 320]`.
+- **Man-B ↔ Man-C alignment:** B and C are aligned; A and C are not.
+
+**Run (transform=True):**
+
+1. **Input:** Man-A, span `[50, 150]`. Queue: `[(Man-A, 50, 150)]`.
+2. **Dequeue (Man-A, 50, 150).** Alignment pair (Man-A, Man-B):
+   - `get_aligned_segments(a1, 50, 150)` → B-side segments with spans [200,250], [250,300].
+   - Overall span on B: `[200, 300]`.
+   - Manifestation_2 = Man-B; not yet visited.
+   - `get_overlapping_segments(Man-B, 200, 300)` → segments in Man-B's segmentation overlapping [200,300] → **seg-B1, seg-B2**.
+   - **Result for Man-B:** `{ "manifestation_id": "Man-B", "segments": [ { "segment_id": "seg-B1", "span": { "start": 200, "end": 275 } }, { "segment_id": "seg-B2", "span": { "start": 275, "end": 320 } } ] }`.
+   - Mark Man-B visited; enqueue `(Man-B, 200, 300)`.
+3. **Dequeue (Man-B, 200, 300).** Alignment pairs for Man-B: one to Man-A (skip: already visited), one to Man-C:
+   - Aligned segments on C's side yield an overall span on C (e.g. [0, 150]).
+   - `get_overlapping_segments(Man-C, overall_start, overall_end)` → e.g. seg-C1, seg-C2.
+   - **Result for Man-C:** `{ "manifestation_id": "Man-C", "segments": [ ... ] }` (indirect mapping).
+   - Enqueue Man-C with that span; Man-C is marked visited.
+4. When the queue is empty, the algorithm returns the list of `{ manifestation_id, segments }` entries (Man-B and Man-C in this example).
+
+So we get one mapping per reached manifestation; each mapping is expressed in that manifestation's **segmentation** segments.
+
+### Incoming vs outgoing alignment
+
+The Cypher for alignment pairs is:
+
+`(m:Manifestation)<-[:ANNOTATION_OF]-(a1:Annotation)-[:ALIGNED_TO]-(a2:Annotation)`.
+
+So **a1** is always the current manifestation's alignment annotation ("our" side), and **a2** is the other. We only follow **outgoing** alignment: from our annotation to the other. We do not need a separate "incoming" case, because every alignment is represented as a pair and we consider both directions by recording `(a1,a2)` and `(a2,a1)` in `traversed_alignment_pairs`, and we traverse from each manifestation to its neighbors. The "other alignment span" we use is the span of segments in **a2** (their side); we then query the **segmentation** of the manifestation that owns a2 to get the final mapping segments.
+
+---
+
 ## 4. Database Operations
 
 ### Storing segment_mapping
